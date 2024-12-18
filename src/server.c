@@ -35,7 +35,7 @@ int main()
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
     sa.sin_port = htons(5555);
-    sa.sin_addr.s_addr = htonl(INADDR_ANY);
+    // sa.sin_addr.s_addr = htonl(INADDR_ANY);
 
     bind(s, (struct sockaddr *)&sa, sizeof(sa));
 
@@ -56,7 +56,7 @@ int main()
         Sleep(5000);
         return 1; // Или обработать ошибку по-другому
     }
-    else printf("Successfully to launch client.\n");
+    //else printf("Successfully to launch client.\n");
 
     // while(1)
     while(client_socket = accept(s, (struct sockaddr *)&client_addr, &client_addr_size))
@@ -91,8 +91,9 @@ int main()
             send(client_socket, nm, sizeof(nm), 0);*/
 
         }
-        // closesocket(s);
+        closesocket(s);
     }
+    printf("Connect wtf\n");
 
     closesocket(s);
 
@@ -200,3 +201,5 @@ BOOL LaunchClient() {
 
     return TRUE;
 }
+
+
