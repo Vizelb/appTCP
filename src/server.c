@@ -11,10 +11,9 @@
 #include <time.h>
 
 void writeArrayToFile(const char *filename, char *array, int size);
+BOOL LaunchClient(); 
 
 const char *filename = "log.txt";               // Имя файла для записи
-//int array[] = {1, 2, 3, 4, 5};                  // Пример массива
-//int size = sizeof(array) / sizeof(array[0]);    // Размер массива
 
 int connection_counter = 0;
 
@@ -24,8 +23,10 @@ int main()
 
     printf("I am SERVER!\n");
 
+    int errWsasStartup;
     WSADATA ws;
-    WSAStartup( MAKEWORD(2, 2), &ws);      // инициализаия использования секитов
+    if (errWsasStartup = WSAStartup( MAKEWORD(2, 2), &ws) != 0)      // инициализаия использования секитов
+        printf("Ошибка WSAStartup: %d\n", errWsasStartup);
 
     SOCKET s;           // дескриптор сокета
     s = socket(AF_INET, SOCK_STREAM, 0);
@@ -34,23 +35,40 @@ int main()
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
     sa.sin_port = htons(5555);
+    sa.sin_addr.s_addr = htonl(INADDR_ANY);
 
-
-    bind(s, &sa, sizeof(sa));
+    bind(s, (struct sockaddr *)&sa, sizeof(sa));
 
     listen(s, 100);  // 100 - размер очередиы
 
-    int buf[5];
+    // int buf[5];
     char json_message[512];
     memset(json_message, 0, sizeof(json_message));
-    memset(buf, 0, sizeof(buf));
+    // memset(buf, 0, sizeof(buf));
 
     SOCKET client_socket;
     SOCKADDR_IN client_addr;
     int client_addr_size = sizeof(client_addr);
 
-    while(client_socket = accept(s, &client_addr, &client_addr_size))
+    // Запускаем клиента
+    if (!LaunchClient()) {
+        printf("Failed to launch client.\n");
+        Sleep(5000);
+        return 1; // Или обработать ошибку по-другому
+    }
+    else printf("Successfully to launch client.\n");
+
+    // while(1)
+    while(client_socket = accept(s, (struct sockaddr *)&client_addr, &client_addr_size))
     {
+
+        // client_socket = accept(s, (struct sockaddr *)&client_addr, &client_addr_size);
+
+        // if (client_socket == INVALID_SOCKET)
+        // {
+        //     printf("Errpr connection to client\n");
+        //     continue;
+        // }
 
         printf("Connect OK");
         printf(" - number = %d\n", ++connection_counter);
@@ -73,11 +91,8 @@ int main()
             send(client_socket, nm, sizeof(nm), 0);*/
 
         }
+        // closesocket(s);
     }
-
-
-
-
 
     closesocket(s);
 
@@ -142,10 +157,46 @@ void writeArrayToFile(const char *filename, char *array, int size)
     if (fputs(array, file) == EOF) {
         perror("Ошибка записи в файл");
         fclose(file);
-        return 1;
+        //return 1;
     }
     fprintf(file, "\n");
 
     fclose(file); // Закрываем файл
 }
 
+
+
+// Функция для запуска клиента
+BOOL LaunchClient() {
+    STARTUPINFO si;
+    PROCESS_INFORMATION pi;
+
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(&pi, sizeof(pi));
+
+    // Путь к исполняемому файлу клиента
+    // Важно! Укажите корректный путь.
+    // Если клиент в той же директории, можно использовать просто "client.exe".
+    if (!CreateProcess(
+        "client.exe",   // Имя исполняемого файла
+        NULL,           // Командная строка (можно передать аргументы)
+        NULL,           // Дескриптор защиты процесса
+        NULL,           // Дескриптор защиты потока
+        FALSE,          // Наследование дескрипторов
+        CREATE_NEW_CONSOLE,  // Создать новое консольное окно для клиента
+        NULL,           // Блок среды
+        NULL,           // Текущий каталог
+        &si,            // STARTUPINFO
+        &pi             // PROCESS_INFORMATION
+    )) {
+        printf("CreateProcess failed (%d).\n", GetLastError());
+        return FALSE;
+    }
+
+    // Закрываем дескрипторы, которые нам больше не нужны на сервере.
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    return TRUE;
+}

@@ -9,7 +9,7 @@
       "stopAtEntry": false,
       "externalConsole": true,
       "cwd": "${workspaceFolder}",
-      "program": "c:/DanyaMain/Projects_programming/C/TCPClientServer/build/Debug/outDebug",
+      "program": "c:/DanyaMain/Projects_programming/C/appTCP/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [

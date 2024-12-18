@@ -5,7 +5,7 @@
 #include <ws2tcpip.h>
 #include <winsock2.h>
 
-//#include <windows.h>
+#include <windows.h>
 
 #include <locale.h>
 
@@ -24,7 +24,8 @@
 
 void InitWatchDirectory(const char *path);
 //void* WatchDirectory(void);
-void* SendMessageToServer();
+//void* SendMessageToServer();
+DWORD WINAPI SendMessageToServer(LPVOID lpParam);
 
 DWORD WINAPI DirectoryWatcher(LPVOID lpParam);      // не используется
 
@@ -62,9 +63,6 @@ int main()
     SSL_load_error_strings();
     printf("OpenSSL Version: %s\n", OpenSSL_version(OPENSSL_VERSION));
 
-
-
-
     setlocale(LC_ALL, "Russian");           // для выводы в консоль кириллицы
 
     printf("I am CLIENT!\n");
@@ -83,7 +81,11 @@ int main()
 
     sa.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
 
-    connect(s, &sa, sizeof(sa));    // установка соединения с сервером
+    sa.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    sleep(10);
+
+    connect(s, (struct sockaddr *)&sa, sizeof(sa));    // установка соединения с сервером
 
     InitWatchDirectory("C:/DanyaMain/Projects_programming/C/C/ClientTCP");
 
@@ -105,10 +107,10 @@ int main()
         return 1;
     }
 
-    // Создаем поток для увеличения счетчика
+    // Создаем поток для отправки сообщений
     HANDLE hThreadMessendger = CreateThread(NULL, 0, SendMessageToServer, NULL, 0, NULL);
     if (hThreadMessendger == NULL) {
-        printf("Не удалось создать поток счетчика\n");
+        printf("Не удалось создать поток\n");
         CloseHandle(hThreadWatcher);
         CloseHandle(hMutex);
         CloseHandle(hDir);
@@ -124,12 +126,6 @@ int main()
     CloseHandle(hThreadMessendger);
     CloseHandle(hMutex);
     CloseHandle(hDir);
-
-
-
-
-
-
 
     printf("Закрытие программы");
 
@@ -155,7 +151,8 @@ void InitWatchDirectory(const char *path)
         return;
     }
 
-    printf("Наблюдение за изменениями в директории: %s\n", path);
+    // printf("Наблюдение за изменениями в директории: %s\n", path);
+    printf("Watch for derictory: %s\n", path);
 }
 
 // Функция для обработки изменений в директории
@@ -285,7 +282,8 @@ DWORD WINAPI DirectoryWatcher_v2(LPVOID lpParam) {
     return 0;
 }
 
-void* SendMessageToServer()
+// void* SendMessageToServer()
+DWORD WINAPI SendMessageToServer(LPVOID lpParam)
 {
     clock_t start_time = clock(); // Запоминаем начальное время
     int timer_seconds = 2;        // Таймер на 5 секунд
@@ -314,7 +312,7 @@ void* SendMessageToServer()
         // Освобождаем мьютекс
         ReleaseMutex(hMutex);
     }
-    return NULL;
+    // return NULL;
 
 }
 
@@ -409,7 +407,8 @@ void create_json_message(const char *type_of_event, const char *file_name) {
              type_of_event, file_name, sha256_hash);
     flag_event = 1;
     // Выводим JSON-сообщение
-    printf("\nСформированное JSON-сообщение:\n%s\n", json_message);
+    // printf("\nСформированное JSON-сообщение:\n%s\n", json_message);
+    printf("\nFormed JSON-messege:\n%s\n", json_message);
 }
 
 

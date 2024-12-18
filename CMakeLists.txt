@@ -2,11 +2,10 @@
 cmake_minimum_required(VERSION 3.10)
 
 # Название проекта
-project("TCPClientServer")
-message("Project name: ${PROJECT_NAME}") # Выведет "TCP_Client_Server_Implementation_in_C"
+project("appTCP")
 
 # Версия стандарта языка C
-set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 
@@ -33,12 +32,13 @@ if(WIN32)
     find_package(Threads REQUIRED)
 
     # Добавляем исполняемый файл для клиента
-    add_executable(client.c ${SOURCES_CLIENT})
-    target_link_libraries(client.c Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
+    add_executable(client ${SOURCES_CLIENT})
+    target_link_libraries(client Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
+    target_link_libraries(client ws2_32)
 
     # Сервер: используем Winsock
-    add_executable(server.c ${SOURCES_SERVER})
-    target_link_libraries(server.c ws2_32)
+    add_executable(server ${SOURCES_SERVER})
+    target_link_libraries(server ws2_32)
 else()
     # Если не Windows (например, Linux или macOS), сообщаем об ошибке
     message(FATAL_ERROR "Этот проект предназначен только для Windows.")
