@@ -2,26 +2,30 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <limits.h> // for PATH_MAX
 #include <time.h>
 #include <msgpack.h>
-// #include <msgpack/unpack.h>
 #include <signal.h>
 #include <sys/wait.h>
 
 
 #define PORT 5555
 #define BUFFER_SIZE 1024
-const char *filename = "log.txt";               // Имя файла для записи
 
+// Структура сообщения
+typedef struct {
+    char type_of_event[50];
+    char file_name[256];
+    char sha256[65];
+} Message;
 
-void writeArrayToFile(const char *filename, char *array, int size);
-void sigterm_handler(int sig);
+static void writeArrayToFile(const char *filename, char *array, int size);
+static void sigterm_handler(int sig);
+static int deserialize_message(const char *data, size_t len, Message *msg);
 
-int client_pid = 0;
+static const char *filename = "log.txt";               // Имя файла для записи
+static int client_pid = 0;
 
 
 int main(int argc, char *argv[]) {
@@ -61,7 +65,7 @@ int main(int argc, char *argv[]) {
         printf("Error: Missing parameter: directory - %s\n", directory);
         return 1;
     }  
-    if (frequency == NULL) {
+    if (frequency == 0){
         printf("Error: Missing parameter: frequency - %d\n", frequency);
         return 1; 
     }
@@ -94,7 +98,7 @@ int main(int argc, char *argv[]) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
-    printf("Server listening on port %d...\n", PORT);
+    // printf("Server listening on port %d...\n", PORT);
 
 
     // Запуск клиента, как отдельный процесс
@@ -118,7 +122,6 @@ int main(int argc, char *argv[]) {
     char buffer[BUFFER_SIZE] = {0};
     snprintf(buffer, BUFFER_SIZE, "%s %d", directory, frequency);
     send(new_socket, buffer, strlen(buffer), 0);
-    // printf("%s, %d\n", directory, frequency);
 
     char json_message[BUFFER_SIZE];
     memset(json_message, 0, sizeof(json_message));
@@ -127,33 +130,23 @@ int main(int argc, char *argv[]) {
 
     while(bytes_received = recv(new_socket, json_message, sizeof(json_message), 0) > 0 )
     {
-        msgpack_unpacked unpacked;
-        msgpack_unpacked_init(&unpacked);
-
-        size_t offset = 0;
-
-        if (msgpack_unpack_next(&unpacked, json_message, bytes_received, &offset)) {
-            msgpack_object obj = unpacked.data;
-
-            // Ожидаем msgpack-объект типа MAP, содержащий ключи type_of_event, file_name, sha256
-            if (obj.type == MSGPACK_OBJECT_MAP) {
-                printf("Received event:\n");
-                for (uint32_t i = 0; i < obj.via.map.size; i++) {
-                    msgpack_object_kv kv = obj.via.map.ptr[i];
-                    printf("%.*s: %.*s\n",
-                           (int)kv.key.via.str.size, kv.key.via.str.ptr,
-                           (int)kv.val.via.str.size, kv.val.via.str.ptr);
-                }
-            }
-        }
-        msgpack_unpacked_destroy(&unpacked);
+        // Message msg;
+        // if (deserialize_message(json_message, bytes_received, &msg) == 0) {
+            // printf("Received message:\n");
+            // printf("Type of Event: %s\n", msg.type_of_event);
+            // printf("File Name: %s\n", msg.file_name);
+            // printf("SHA256: %s\n", msg.sha256);
+        // }   
+        // char event_buffer[BUFFER_SIZE];
+        // snprintf(event_buffer, BUFFER_SIZE, "type_of_event: %s, file_name: %.255s, sha256: %s", 
+        //     msg.type_of_event,
+        //     msg.file_name,
+        //     msg.sha256);
 
         int size_buf = sizeof(json_message) / sizeof(json_message[0]); 
         writeArrayToFile(filename, json_message, size_buf);
 
         printf("\njson_message: %s\n", json_message);
-        // printf("\n");
-
     }
 
     // Закрытие соединения и сокета
@@ -163,7 +156,7 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-void sigterm_handler(int sig) {
+static void sigterm_handler(int sig) {
     if (client_pid > 0) {
         printf("kill - client_pid = %d\n", client_pid);
         kill(client_pid, SIGTERM);
@@ -173,7 +166,7 @@ void sigterm_handler(int sig) {
 }
 
 
-void writeArrayToFile(const char *filename, char *array, int size)
+static void writeArrayToFile(const char *filename, char *array, int size)
 {
     FILE *file = fopen(filename, "a+");
 
@@ -225,4 +218,40 @@ void writeArrayToFile(const char *filename, char *array, int size)
 }
 
 
+static int deserialize_message(const char *data, size_t len, Message *msg) {
+    msgpack_unpacked result;
+    msgpack_unpacked_init(&result);
 
+    // printf("data = %s\n", data);
+    if (!msgpack_unpack_next(&result, data, len, NULL)) {
+        fprintf(stderr, "Failed to unpack message\n");
+        msgpack_unpacked_destroy(&result);
+        return -1;
+    }
+
+    msgpack_object obj = result.data;
+    // printf("obj.type = %d (expected: %d)\n", obj.type, MSGPACK_OBJECT_MAP);
+    // printf("data = %s\n", data);
+    if ((int)obj.type != (int)MSGPACK_OBJECT_MAP) {
+        fprintf(stderr, "Invalid message format\n");
+        msgpack_unpacked_destroy(&result);
+        return -1;
+    }
+    
+    msgpack_object_kv *kv = obj.via.map.ptr;
+    for (size_t i = 0; i < obj.via.map.size; ++i) {
+        if (strncmp(kv[i].key.via.str.ptr, "type_of_event: ", kv[i].key.via.str.size) == 0) {
+            snprintf(msg->type_of_event, sizeof(msg->type_of_event), "%.*s",
+                     (int)kv[i].val.via.str.size, kv[i].val.via.str.ptr);
+        } else if (strncmp(kv[i].key.via.str.ptr, "file_name: ", kv[i].key.via.str.size) == 0) {
+            snprintf(msg->file_name, sizeof(msg->file_name), "%.*s",
+                     (int)kv[i].val.via.str.size, kv[i].val.via.str.ptr);
+        } else if (strncmp(kv[i].key.via.str.ptr, "sha256: ", kv[i].key.via.str.size) == 0) {
+            snprintf(msg->sha256, sizeof(msg->sha256), "%.*s",
+                     (int)kv[i].val.via.str.size, kv[i].val.via.str.ptr);
+        }
+    }
+
+    msgpack_unpacked_destroy(&result);
+    return 0;
+}
