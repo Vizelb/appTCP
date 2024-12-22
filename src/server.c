@@ -30,18 +30,16 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR) {
+        perror("error to connect sigterm\n");
+        exit(1);
+    }
+
     int server_fd, new_socket;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
-    // char buffer[BUFFER_SIZE] = {0};
     char project_path[1000];
-    
-    // struct sigaction sa;
 
-    // sa.sa_handler = sigterm_handler;
-    // sigemptyset(&sa.sa_mask);
-    // sa.sa_flags = 0;
-    // sigaction(SIGTERM, &sa, NULL);
 
     // 1. Создание сокета
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
@@ -72,13 +70,16 @@ int main(int argc, char *argv[]) {
     // Запуск клиента, как отдельный процесс
     pid_t pid = fork();
     if (pid == 0) {
+        // printf("client_pid = 0 = %d\n", client_pid);
         execl("./client", "client", NULL);
         perror("execl");
         exit(EXIT_FAILURE);
     } else if (pid < 0) {
         perror("fork");
+        // printf("client_pid < 0 = %d\n", client_pid);
         exit(EXIT_FAILURE);
     } else {
+        // printf("client_pid > 0 = %d\n", client_pid);
         client_pid = pid;
     }
 
@@ -116,6 +117,7 @@ int main(int argc, char *argv[]) {
 
 void sigterm_handler(int sig) {
     if (client_pid > 0) {
+        printf("kill - client_pid = %d\n", client_pid);
         kill(client_pid, SIGTERM);
         waitpid(client_pid, NULL, 0);
     }

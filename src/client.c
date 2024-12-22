@@ -38,14 +38,10 @@ int main() {
     struct sockaddr_in serv_addr;
     char buffer[BUFFER_SIZE] = {0};
 
-
-
-    // struct sigaction sa;
-
-    // sa.sa_handler = sigterm_handler;
-    // sigemptyset(&sa.sa_mask);
-    // sa.sa_flags = 0;
-    // sigaction(SIGTERM, &sa, NULL);
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR) {
+        perror("error to connect sigterm\n");
+        exit(1);
+    }
 
     // 1. Создание сокета
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -94,6 +90,9 @@ int main() {
 }
 
 void sigterm_handler(int sig) {
+    // pid_t pid = getpid();
+    // printf("client get signal SIGTERM - pid %d\n", pid);
+
     pthread_cancel(inotify_thread);
     pthread_cancel(sender_thread);
     close(sock);
