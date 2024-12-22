@@ -165,7 +165,7 @@ void *inotify_watcher(void *arg) {
                 }
 
                 char sha256_buff[65];
-                printf("path %s\n", full_path);
+                // printf("path %s\n", full_path);
                 compute_sha256(full_path, sha256_buff);
 
                 // char file_name_d[255 + 1] = {0};  
