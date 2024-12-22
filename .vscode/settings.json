@@ -4,7 +4,6 @@
   "C_Cpp_Runner.debuggerPath": "gdb",
   "C_Cpp_Runner.cStandard": "",
   "C_Cpp_Runner.cppStandard": "",
-  "C_Cpp_Runner.msvcBatchPath": "C:/Program Files/Microsoft Visual Studio/VR_NR/Community/VC/Auxiliary/Build/vcvarsall.bat",
   "C_Cpp_Runner.useMsvc": false,
   "C_Cpp_Runner.warnings": [
     "-Wall",
@@ -58,15 +57,17 @@
   "C_Cpp_Runner.msvcSecureNoWarnings": false,
   "cmake.options.statusBarVisibility": "visible",
   "files.associations": {
-    "pthread.h": "c"
+    "pthread.h": "c",
+    "types.h": "c",
+    "in.h": "c"
   },
 
 
-  "cmake.configureSettings": {
-    "OPENSSL_ROOT_DIR": ["C:/Program Files/OpenSSL-Win64", "C:/msys64/mingw64/lib"]
-  }, 
+  // "cmake.configureSettings": {
+  //   "OPENSSL_ROOT_DIR": ["C:/Program Files/OpenSSL-Win64", "C:/msys64/mingw64/lib"]
+  // }, 
 
-   "cmake.generator": "MinGW Makefiles"   //  "cmake.generator": "mingw32-make"
+   "cmake.generator": "Unix Makefiles"   //  "cmake.generator": "mingw32-make"
   //"cmake.generator": "Visual Studio 16 2019"
 
 }

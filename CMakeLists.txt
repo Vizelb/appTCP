@@ -22,7 +22,7 @@ set(SOURCES_SERVER
 include_directories(${CMAKE_SOURCE_DIR})
 
 # Проверяем, что мы на Windows, и добавляем необходимые библиотеки
-if(WIN32)
+# if(WIN32)
     # Клиент: используем OpenSSL и Pthread
     find_package(OpenSSL REQUIRED)
     include_directories(${OPENSSL_INCLUDE_DIR})
@@ -34,14 +34,16 @@ if(WIN32)
     # Добавляем исполняемый файл для клиента
     add_executable(client ${SOURCES_CLIENT})
     target_link_libraries(client Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
-    target_link_libraries(client ws2_32)
+
+    # target_link_libraries(client ws2_32)
 
     # Сервер: используем Winsock
     add_executable(server ${SOURCES_SERVER})
-    target_link_libraries(server ws2_32)
-else()
-    # Если не Windows (например, Linux или macOS), сообщаем об ошибке
-    message(FATAL_ERROR "Этот проект предназначен только для Windows.")
-endif()
+    # target_link_libraries(server PRIVATE MsgPack::msgpack)
+    # target_link_libraries(server ws2_32)
+# else()
+#     # Если не Windows (например, Linux или macOS), сообщаем об ошибке
+#     message(FATAL_ERROR "Этот проект предназначен только для Windows.")
+# endif()
 
 

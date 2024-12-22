@@ -1,242 +1,200 @@
+// client.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <ws2tcpip.h>
-#include <winsock2.h>
-
-#include <windows.h>
-
-#include <locale.h>
-
-#include <time.h>
-
-#include <pthread.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/inotify.h>
+#include <limits.h>
+#include <sys/inotify.h>
+#include <signal.h>
+#include <pthread.h>
 
 #include <openssl/ssl.h>
+#include <msgpack.h>
 
-void InitWatchDirectory(const char *path);
-DWORD WINAPI SendMessageToServer(LPVOID lpParam);
-DWORD WINAPI DirectoryWatcher(LPVOID lpParam);
+#define PORT 5555
+#define SERVER_IP "127.0.0.1" // localhost
+#define BUFFER_SIZE 1024
+#define EVENT_SIZE  (sizeof(struct inotify_event))
+#define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
+
+const int frequency = 10;
+
+int sock = 0;
+pthread_t inotify_thread, sender_thread;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+char event_buffer[BUFFER_SIZE] = {0};
+
+void *event_sender(void *arg);
+void *inotify_watcher(void *arg);
+void sigterm_handler(int sig);
 void compute_sha256(const char *str, char *outputBuffer);
-void create_json_message(const char *type_of_event, const char *file_name);
+char* get_full_path(const char *dir_path, const char *file_name_path) ;
 
-// unsigned char directory_name[128] = "C:/DanyaMain/Projects_programming/C/C/ClientTCP/";  old
-const unsigned char directory_name[128] = "C:/DanyaMain/Projects_programming/C/appTCP/build/";
+int main() {
+    struct sockaddr_in serv_addr;
+    char buffer[BUFFER_SIZE] = {0};
 
-HANDLE hDir;
-HANDLE hMutex;
+    // struct sigaction sa;
 
-int flag_event = 0;
+    // sa.sa_handler = sigterm_handler;
+    // sigemptyset(&sa.sa_mask);
+    // sa.sa_flags = 0;
+    // sigaction(SIGTERM, &sa, NULL);
 
-SOCKET s;           // дескриптор сокета
-
-char json_message[512];
-
-int main()
-{
-    SSL_library_init();
-    SSL_load_error_strings();
-    printf("OpenSSL Version: %s\n", OpenSSL_version(OPENSSL_VERSION));
-
-    setlocale(LC_ALL, "Russian");           // для выводы в консоль кириллицы
-
-    printf("I am CLIENT!\n");
-
-    WSADATA ws;
-    WSAStartup( MAKEWORD(2, 2), &ws);      // инициализаия использования секитов
-
-    //SOCKET s;           // дескриптор сокета
-    s = socket(AF_INET, SOCK_STREAM, 0);
-
-    SOCKADDR_IN sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(5555);
-
-
-    sa.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
-
-    // sa.sin_addr.s_addr = htonl(INADDR_ANY);
-
-    //sleep(10);
-
-    connect(s, (struct sockaddr *)&sa, sizeof(sa));    // установка соединения с сервером
-
-    // InitWatchDirectory("C:/DanyaMain/Projects_programming/C/C/ClientTCP");
-    InitWatchDirectory("C:/DanyaMain/Projects_programming/C/appTCP/build/");
-
-
-    // Создаем мьютекс
-    hMutex = CreateMutex(NULL, FALSE, NULL);
-    if (hMutex == NULL) {
-        printf("Не удалось создать мьютекс\n");
-        CloseHandle(hDir);
-        return 1;
+    // 1. Создание сокета
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Socket creation error");
+        return -1;
     }
 
-    // Создаем поток для наблюдения за директорией
-    HANDLE hThreadWatcher = CreateThread(NULL, 0, DirectoryWatcher, NULL, 0, NULL);
-    if (hThreadWatcher == NULL) {
-        printf("Не удалось создать поток наблюдателя\n");
-        CloseHandle(hMutex);
-        CloseHandle(hDir);
-        return 1;
+    // 2. Настройка адреса сервера
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
+
+    // Преобразование IP-адреса из строки в бинарный формат
+    if (inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr) <= 0) {
+        perror("Invalid address/ Address not supported");
+        return -1;
     }
 
-    // Создаем поток для отправки сообщений
-    HANDLE hThreadMessendger = CreateThread(NULL, 0, SendMessageToServer, NULL, 0, NULL);
-    if (hThreadMessendger == NULL) {
-        printf("Не удалось создать поток\n");
-        CloseHandle(hThreadWatcher);
-        CloseHandle(hMutex);
-        CloseHandle(hDir);
-        return 1;
+    // 3. Подключение к серверу
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        perror("Connection Failed");
+        return -1;
     }
 
-    // Ждем завершения обоих потоков (в реальном приложении это может быть бесконечный цикл или условие выхода)
-    WaitForSingleObject(hThreadWatcher, INFINITE);
-    WaitForSingleObject(hThreadMessendger, INFINITE);
+    pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+    pthread_create(&inotify_thread, NULL, inotify_watcher, &cond);
+    pthread_create(&sender_thread, NULL, event_sender, &cond);
 
-    // Освобождаем ресурсы
-    CloseHandle(hThreadWatcher);
-    CloseHandle(hThreadMessendger);
-    CloseHandle(hMutex);
-    CloseHandle(hDir);
+    pthread_join(inotify_thread, NULL);
+    pthread_join(sender_thread, NULL);
 
-    printf("Закрытие программы");
+    pthread_mutex_destroy(&mutex);
+    pthread_cond_destroy(&cond);
+
+    close(sock);
 
     return 0;
 }
 
-
-void InitWatchDirectory(const char *path)
-{
-    // Открываем директорию для наблюдения
-    hDir = CreateFile(
-        path,
-        FILE_LIST_DIRECTORY,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        NULL,
-        OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS,
-        NULL
-    );
-
-    if (hDir == INVALID_HANDLE_VALUE) {
-        printf("Не удалось открыть директорию: %s\n", path);
-        return;
-    }
-
-    // printf("Наблюдение за изменениями в директории: %s\n", path);
-    printf("Watch for derictory: %s\n", path);
+void sigterm_handler(int sig) {
+    pthread_cancel(inotify_thread);
+    pthread_cancel(sender_thread);
+    close(sock);
+    exit(0);
 }
 
+void *inotify_watcher(void *arg) {
+    int fd = inotify_init();
+    if (fd < 0) {
+        perror("inotify_init");
+        pthread_exit(NULL);
+    }
 
-// Функция для обработки изменений в директории
-DWORD WINAPI DirectoryWatcher(LPVOID lpParam) {
-    DWORD dwBytesReturned;
-    BOOL b_event;
-    char buffer[4096];
-    FILE_NOTIFY_INFORMATION *pNotify;
+    const char *directory_to_watch = "/programming/appTCP/appTCP/build";
+    int wd = inotify_add_watch(fd, directory_to_watch, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO);
+    if (wd == -1) {
+        perror("inotify_add_watch");
+        pthread_exit(NULL);
+    }
 
-    while (1) {
-        // Ждем изменений в директории
-        b_event = ReadDirectoryChangesW(
-            hDir,                    // Дескриптор открытой директории
-            buffer,                 // Буфер для получения информации об изменениях
-            sizeof(buffer),         // Размер буфера
-            TRUE,                   // Наблюдать за подкаталогами
-            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME, // Типы изменений
-            &dwBytesReturned,       // Количество байт, записанных в буфер
-            NULL,                   // Не используется
-            NULL                    // Не используется
-        );
+    clock_t start_time = clock();           // Запоминаем начальное время
+    int timer_seconds = frequency;          // Таймер на x секунд
 
-        if (!b_event) {
-            printf("Ошибка при чтении изменений в директории\n");
-            break;
+    while(1) {
+        if (!((clock() - start_time) > timer_seconds * CLOCKS_PER_SEC)){
+            continue;
+        }
+        start_time = clock();
+
+        int length = read(fd, event_buffer, EVENT_BUF_LEN);
+        if (length < 0) {
+            perror("read");
+            continue;
         }
 
-        pNotify = (FILE_NOTIFY_INFORMATION *)buffer;
+        int i = 0;
+        while (i < length) {
+            struct inotify_event *event = (struct inotify_event *) &event_buffer[i];
+            if (event->len) {
+                pthread_mutex_lock(&mutex);
+             
+                char *full_path = get_full_path(directory_to_watch, event->name);                
+                const char *type_of_event;
 
-        do {
-            const char *type_of_event;
-            // Определяем тип события
-            switch (pNotify->Action) {
-                case FILE_ACTION_ADDED:
+                if (event->mask & IN_CREATE || event->mask & IN_MOVED_TO ){
+                    // if (event->mask & IN_ISDIR) {
+                    //     printf("Directory created: %s\n", full_path);
+                    // } else {
+                    //     printf("File created: %s\n", full_path);
+                    // }
                     type_of_event = "create";
-                    //printf("Файл создан\n");
-                    break;
-                case FILE_ACTION_REMOVED:
-                    type_of_event = "delete";
-                    //printf("Файл удален\n");
-                    break;
-                case FILE_ACTION_RENAMED_OLD_NAME :
-                    type_of_event = "delete";
-                    //printf("Файл удален\n");
-                    break;
-                case FILE_ACTION_RENAMED_NEW_NAME:
-                    type_of_event = "create";
-                    //printf("Файл удален\n");
-                    break;
-                default:
-                    break;
+                }
+                else if (event->mask & IN_DELETE || event->mask & IN_MOVED_FROM) {
+                    // if (event->mask & IN_ISDIR) {
+                    //     printf("Directory deleted: %s\n", full_path);
+                    // } else {
+                    //     printf("File deleted: %s\n", full_path);
+                    // }
+                    type_of_event = "DELETE";
+                } else {
+                    // if (event->mask & IN_ISDIR) {
+                    //     printf("Directory modified: %s\n", full_path);
+                    // } else {
+                    //     printf("File modified: %s\n", full_path);
+                    // }
+                    type_of_event = "unknown";
+                }
+                // else type_of_event = "UNKNOWN";
+
+                char sha256_buff[65];
+                // printf("path %s\n", full_path);
+                compute_sha256(full_path, sha256_buff);
+
+                char file_name_d[255 + 1] = {0};  
+                strncpy(file_name_d, event->name, event->len); 
+                file_name_d[event->len] = '\0';  
+
+                snprintf(event_buffer, BUFFER_SIZE, "type_of_event: %s, file_name: %.255s, sha256: %s", 
+                         type_of_event,
+                         file_name_d,
+                         sha256_buff);
+                pthread_mutex_unlock(&mutex);
+                pthread_cond_signal((pthread_cond_t*)arg);
             }
-            unsigned char hash_name[128] = "C:/DanyaMain/Projects_programming/C/appTCP/build/";
-            char *file_name_utf8 = (char *)malloc((wcslen(pNotify->FileName) + 1) * 4);  // UTF-8 может занимать до 4 байт на символ
-            wcstombs(file_name_utf8, pNotify->FileName, wcslen(pNotify->FileName) + 1);
-            strcat(hash_name, file_name_utf8);
-            //printf("\n hash_name - %s\n", hash_name);
-
-            create_json_message(type_of_event, hash_name);
-
-            // Переходим к следующему уведомлению, если оно есть
-            if (pNotify->NextEntryOffset == 0)
-                break;
-            pNotify = (FILE_NOTIFY_INFORMATION *)((char *)pNotify + pNotify->NextEntryOffset);
-        } while (TRUE);
-    }
-
-    return 0;
-}
-
-// void* SendMessageToServer()
-DWORD WINAPI SendMessageToServer(LPVOID lpParam)
-{
-    clock_t start_time = clock(); // Запоминаем начальное время
-    int timer_seconds = 2;        // Таймер на 5 секунд
-
-    while (1)
-    {
-        // Защищаем доступ к счетчикам с помощью мьютекса
-        WaitForSingleObject(hMutex, INFINITE);
-
-        if ((clock() - start_time) > timer_seconds * CLOCKS_PER_SEC && flag_event == 1)
-        {
-            flag_event = 0;
-            start_time = clock();
-
-            send(s, json_message, sizeof(json_message), 0);
-
-            //printf("Перед отправкой\n");
-            //printf("%s\n", json_message);
-            //printf("\n");
-            /*char st[20];
-            memset(st, 0, sizeof(st));
-            recv(s, st, sizeof(st), 0);
-            printf(st);*/
-
+            i += EVENT_SIZE + event->len;
         }
-        // Освобождаем мьютекс
-        ReleaseMutex(hMutex);
     }
-    // return NULL;
 
+    inotify_rm_watch(fd, wd);
+    close(fd);
+    pthread_exit(NULL);
 }
 
-// Функция для вычисления SHA256-хэша строки
+void *event_sender(void *arg) {
+    pthread_cond_t *cond = (pthread_cond_t*)arg;
+    while(1) {
+        pthread_cond_wait(cond, &mutex);
+        send(sock, event_buffer, strlen(event_buffer), 0);
+        // printf("Client sent: %s\n", event_buffer);
+    }
+    pthread_exit(NULL);
+}
+
+// Функция для получения полного пути к файлу
+char* get_full_path(const char *dir_path, const char *file_name_path) {
+    static char full_path[1024];
+    snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, file_name_path);
+    return full_path;
+}
+
+
+// // Функция для вычисления SHA256-хэша строки
 void compute_sha256(const char *str, char *outputBuffer) {
     unsigned char hash[SHA256_DIGEST_LENGTH]; // Массив для хранения хэша
     SHA256_CTX sha256;
@@ -251,27 +209,158 @@ void compute_sha256(const char *str, char *outputBuffer) {
     outputBuffer[64] = 0; // Завершаем строку нулевым символом
 }
 
-// Функция для формирования JSON-сообщения
-void create_json_message(const char *type_of_event, const char *file_name) {
-    char sha256_hash[65]; // Для хранения SHA256-хэша в виде строки (64 символа + \0)
 
-    // Рассчитываем SHA256 для имени файла (или содержимого файла, в зависимости от задачи)
-    compute_sha256(file_name, sha256_hash);
 
-    // Формируем JSON-сообщение
-    //char json_message[512];
-    snprintf(json_message, sizeof(json_message),
-             "{\n"
-             "  \"type_of_event\": \"%s\",\n"
-             "  \"file_name\": \"%s\",\n"
-             "  \"sha256\": \"%s\"\n"
-             "}",
-             type_of_event, file_name, sha256_hash);
-    flag_event = 1;
-    // Выводим JSON-сообщение
-    // printf("\nСформированное JSON-сообщение:\n%s\n", json_message);
-    printf("\nFormed JSON-messege:\n%s\n", json_message);
-}
+
+
+// #include <stdio.h>
+// #include <stdlib.h>
+// #include <string.h>
+// #include <locale.h>
+// #include <time.h>
+// #include <pthread.h>
+// #include <unistd.h>
+
+// #include <sys/inotify.h>
+
+// #include <arpa/inet.h>
+// #include <openssl/ssl.h>
+// #include <msgpack.h>
+
+
+// void InitWatchDirectory(const char *path);
+// void SendMessageToServer();
+// void DirectoryWatcher(void);
+// void compute_sha256(const char *str, char *outputBuffer);
+// void create_json_message(const char *type_of_event, const char *file_name);
+
+// void *send_data_to_server(void *arg);
+// void *monitor_directory(void *arg);
+
+
+// // unsigned char directory_name[128] = "C:/DanyaMain/Projects_programming/C/C/ClientTCP/";  old
+// // const unsigned char directory_name[128] = "C:/DanyaMain/Projects_programming/C/appTCP/build/";
+// #define PATH_TO_WATCH "/programming/appTCP/appTCP"
+
+// int hDir = 0;
+// int flag_event = 0;
+
+// #define PORT 5555
+// #define BUFFER_SIZE 1024
+
+// int sock = 0;           // дескриптор сокета
+
+// char json_message[512];
+
+// #define MAX_EVENTS 16
+// #define EVENT_SIZE (sizeof(struct inotify_event))
+// #define BUF_LEN (MAX_EVENTS * (EVENT_SIZE + 16))
+
+// char *directory_to_watch = "/path/to/watch"; // Замените на нужную директорию
+
+
+// int main()
+// {
+//     SSL_library_init();
+//     SSL_load_error_strings();
+//     printf("OpenSSL Version: %s\n", OpenSSL_version(OPENSSL_VERSION));
+
+//     setlocale(LC_ALL, "Russian");           // для выводы в консоль кириллицы
+
+//     printf("I am CLIENT!\n");
+//     sleep(3);
+
+    
+//     //int sock;           // дескриптор сокета
+//     sock = socket(AF_INET, SOCK_STREAM, 0);
+//     if (sock < 0) {
+//         perror("socket failed");
+//         sleep(5);
+//         exit(EXIT_FAILURE);
+//     }
+
+//     struct sockaddr_in sa;
+//     memset(&sa, 0, sizeof(sa));
+//     sa.sin_family = AF_INET;
+//     sa.sin_port = htons(PORT);
+
+//     // sa.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
+//     // sa.sin_addr.s_addr = htonl(INADDR_ANY);
+
+//     // Преобразование IP-адреса из строки в бинарный формат
+//     if (inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr) <= 0) {
+//         printf("\nInvalid address/ Address not supported \n");
+//         sleep(5);
+//         return -1;
+//     }
+
+//     if(connect(sock, (struct sockaddr *)&sa, sizeof(sa)) < 0) {   // установка соединения с сервером
+//         printf("\nConnection Failed \n");
+//         sleep(5);
+//         return -1;
+//     }
+
+//     // InitWatchDirectory("C:/DanyaMain/Projects_programming/C/C/ClientTCP");
+//     // InitWatchDirectory("C:/DanyaMain/Projects_programming/C/appTCP/build/");
+
+
+//     // Создаем мьютекс и условную переменную
+//     pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+//     pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+
+//     // Создаем потоки
+//     pthread_t thread_send, thread_monitor;
+//     pthread_create(&thread_send, NULL, send_data_to_server, &sock);
+//     pthread_create(&thread_monitor, NULL, monitor_directory, &sock);
+
+//     // Ждем завершения потоков
+//     pthread_join(thread_send, NULL);
+//     pthread_join(thread_monitor, NULL);
+
+//     close(sock);
+
+//     // hMutex = CreateMutex(NULL, FALSE, NULL);
+//     // if (hMutex == NULL) {
+//     //     printf("Не удалось создать мьютекс\n");
+//     //     CloseHandle(hDir);
+//     //     return 1;
+//     // }
+
+//     // // Создаем поток для наблюдения за директорией
+//     // int hThreadWatcher = CreateThread(NULL, 0, DirectoryWatcher, NULL, 0, NULL);
+//     // if (hThreadWatcher == NULL) {
+//     //     printf("Не удалось создать поток наблюдателя\n");
+//     //     CloseHandle(hMutex);
+//     //     CloseHandle(hDir);
+//     //     return 1;
+//     // }
+
+//     // // Создаем поток для отправки сообщений
+//     // int hThreadMessendger = CreateThread(NULL, 0, SendMessageToServer, NULL, 0, NULL);
+//     // if (hThreadMessendger == NULL) {
+//     //     printf("Не удалось создать поток\n");
+//     //     CloseHandle(hThreadWatcher);
+//     //     CloseHandle(hMutex);
+//     //     CloseHandle(hDir);
+//     //     return 1;
+//     // }
+
+//     // // Ждем завершения обоих потоков (в реальном приложении это может быть бесконечный цикл или условие выхода)
+//     // WaitForSingleObject(hThreadWatcher, INFINITE);
+//     // WaitForSingleObject(hThreadMessendger, INFINITE);
+
+//     // // Освобождаем ресурсы
+//     // CloseHandle(hThreadWatcher);
+//     // CloseHandle(hThreadMessendger);
+//     // CloseHandle(hMutex);
+//     // CloseHandle(hDir);
+
+//     printf("Закрытие программы");
+
+//     return 0;
+// }
+
+
 
 
 
