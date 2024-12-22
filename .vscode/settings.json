@@ -10,7 +10,8 @@
   "files.associations": {
     "pthread.h": "c",
     "types.h": "c",
-    "in.h": "c"
+    "in.h": "c",
+    "unpack.h": "c"
   },
    "cmake.generator": "Unix Makefiles"   //  "cmake.generator": "mingw32-make"
 }

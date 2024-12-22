@@ -7,10 +7,11 @@
 #include <arpa/inet.h>
 #include <limits.h> // for PATH_MAX
 #include <time.h>
-
+#include <msgpack.h>
+// #include <msgpack/unpack.h>
 #include <signal.h>
 #include <sys/wait.h>
-#include <msgpack.h>
+
 
 #define PORT 5555
 #define BUFFER_SIZE 1024
@@ -24,10 +25,45 @@ int client_pid = 0;
 
 
 int main(int argc, char *argv[]) {
-
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s <directory> <frequency>\n", argv[0]);
-        exit(EXIT_FAILURE);
+        
+    char *directory = NULL;
+    int frequency = 0;
+    
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-d") == 0) {
+            if (i + 1 < argc && strcmp(argv[i+1], "-t") != 0 ){
+                directory = argv[i + 1];
+                i++;
+            } else {
+                printf("Error: Directory path is missing after -d flag.\n");
+                return 1;
+            }
+        } else if (i == 1) {
+            printf("Error: Flag -d is missing\n");
+            return 1;
+        } else if (strcmp(argv[i], "-t") == 0) {
+            if (i + 1 < argc) {
+                frequency = atoi(argv[i + 1]);
+                i++;
+            } else {
+                printf("Error: Frequency value is missing after -t flag.\n");
+                return 1;
+            }
+        } else if (i == 3) {
+            printf("Error: Flag -t is missing\n");
+            return 1;
+        } else {
+            printf("Error: Unknown argument '%s.\n", argv[i]);
+            return 1;
+        }
+    }
+    if (directory == NULL){
+        printf("Error: Missing parameter: directory - %s\n", directory);
+        return 1;
+    }  
+    if (frequency == NULL) {
+        printf("Error: Missing parameter: frequency - %d\n", frequency);
+        return 1; 
     }
 
     if (signal(SIGTERM, sigterm_handler) == SIG_ERR) {
@@ -40,75 +76,87 @@ int main(int argc, char *argv[]) {
     int addrlen = sizeof(address);
     char project_path[1000];
 
-
-    // 1. Создание сокета
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("socket failed");
         exit(EXIT_FAILURE);
     }
 
-    // 2. Настройка адреса
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(PORT);
 
-    // 3. Привязка сокета к адресу и порту
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("bind failed");
+        perror("bind failed\n");
         exit(EXIT_FAILURE);
     }
 
-    // 4. Прослушивание входящих соединений
     if (listen(server_fd, 3) < 0) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
-
     printf("Server listening on port %d...\n", PORT);
 
 
     // Запуск клиента, как отдельный процесс
     pid_t pid = fork();
     if (pid == 0) {
-        // printf("client_pid = 0 = %d\n", client_pid);
         execl("./client", "client", NULL);
         perror("execl");
         exit(EXIT_FAILURE);
     } else if (pid < 0) {
         perror("fork");
-        // printf("client_pid < 0 = %d\n", client_pid);
         exit(EXIT_FAILURE);
     } else {
-        // printf("client_pid > 0 = %d\n", client_pid);
         client_pid = pid;
     }
 
-
-    // 5. Принятие входящего соединения
     if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
         perror("accept");
         exit(EXIT_FAILURE);
     }
 
     char buffer[BUFFER_SIZE] = {0};
-    snprintf(buffer, BUFFER_SIZE, "%s %d", argv[1], atoi(argv[2]));
+    snprintf(buffer, BUFFER_SIZE, "%s %d", directory, frequency);
     send(new_socket, buffer, strlen(buffer), 0);
-    // printf("Server sent: %s\n", buffer);
+    // printf("%s, %d\n", directory, frequency);
 
-    char json_message[512];
+    char json_message[BUFFER_SIZE];
     memset(json_message, 0, sizeof(json_message));
 
-        while(recv(new_socket, json_message, sizeof(json_message), 0) > 0 )
-        {
-            int size_buf = sizeof(json_message) / sizeof(json_message[0]);    // Размер массива
-            writeArrayToFile(filename, json_message, size_buf);
+    ssize_t bytes_received;
 
-            printf("\n%s\n", json_message);
-            printf("\n");
+    while(bytes_received = recv(new_socket, json_message, sizeof(json_message), 0) > 0 )
+    {
+        msgpack_unpacked unpacked;
+        msgpack_unpacked_init(&unpacked);
 
+        size_t offset = 0;
+
+        if (msgpack_unpack_next(&unpacked, json_message, bytes_received, &offset)) {
+            msgpack_object obj = unpacked.data;
+
+            // Ожидаем msgpack-объект типа MAP, содержащий ключи type_of_event, file_name, sha256
+            if (obj.type == MSGPACK_OBJECT_MAP) {
+                printf("Received event:\n");
+                for (uint32_t i = 0; i < obj.via.map.size; i++) {
+                    msgpack_object_kv kv = obj.via.map.ptr[i];
+                    printf("%.*s: %.*s\n",
+                           (int)kv.key.via.str.size, kv.key.via.str.ptr,
+                           (int)kv.val.via.str.size, kv.val.via.str.ptr);
+                }
+            }
         }
+        msgpack_unpacked_destroy(&unpacked);
 
-    // 8. Закрытие соединения и сокета
+        int size_buf = sizeof(json_message) / sizeof(json_message[0]); 
+        writeArrayToFile(filename, json_message, size_buf);
+
+        printf("\njson_message: %s\n", json_message);
+        // printf("\n");
+
+    }
+
+    // Закрытие соединения и сокета
     close(new_socket);
     close(server_fd);
 
@@ -127,7 +175,7 @@ void sigterm_handler(int sig) {
 
 void writeArrayToFile(const char *filename, char *array, int size)
 {
-    FILE *file = fopen(filename, "a+"); // Открываем файл в режиме добавления (создаёт файл, если его нет)
+    FILE *file = fopen(filename, "a+");
 
     if (file == NULL) {
         perror("Ошибка открытия файла");
@@ -159,23 +207,21 @@ void writeArrayToFile(const char *filename, char *array, int size)
     }
 
     // Проверяем, пуст ли файл
-    fseek(file, 0, SEEK_END);       // Перемещаем указатель в конец файла
-    long fileSize = ftell(file);    // Узнаём размер файла
+    fseek(file, 0, SEEK_END);       
+    long fileSize = ftell(file);   
     if (fileSize > 0) {
-        fprintf(file, "\n");        // Если файл не пустой, добавляем новую строку перед записью
+        fprintf(file, "\n");       
     }
 
-    // Записываем метку времени в файл
     fprintf(file, "[%s] ", timestamp);
 
-    // Записываем массив в файл
     if (fputs(array, file) == EOF) {
         perror("Ошибка записи в файл");
         fclose(file);
     }
     fprintf(file, "\n");
 
-    fclose(file); // Закрываем файл
+    fclose(file); 
 }
 
 
