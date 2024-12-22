@@ -21,7 +21,9 @@
 #define EVENT_SIZE  (sizeof(struct inotify_event))
 #define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
 
-const int frequency = 10;
+// const int frequency = 10;
+char dir[BUFFER_SIZE] = {0};
+int freq = 0;
 
 int sock = 0;
 pthread_t inotify_thread, sender_thread;
@@ -37,6 +39,8 @@ char* get_full_path(const char *dir_path, const char *file_name_path) ;
 int main() {
     struct sockaddr_in serv_addr;
     char buffer[BUFFER_SIZE] = {0};
+
+
 
     // struct sigaction sa;
 
@@ -67,6 +71,15 @@ int main() {
         return -1;
     }
 
+    // Receive directory and frequency
+    int bytes_read = read(sock, buffer, BUFFER_SIZE);
+    if (bytes_read <= 0) {
+        printf("Failed to receive initial data\n");
+        return -1;
+    }
+    sscanf(buffer, "%s %d", dir, &freq);
+    printf("Client received: Directory: %s, Frequency: %d\n", dir, freq);
+
     pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
     pthread_create(&inotify_thread, NULL, inotify_watcher, &cond);
     pthread_create(&sender_thread, NULL, event_sender, &cond);
@@ -96,7 +109,7 @@ void *inotify_watcher(void *arg) {
         pthread_exit(NULL);
     }
 
-    const char *directory_to_watch = "/programming/appTCP/appTCP/build";
+    const char *directory_to_watch = dir;//"/programming/appTCP/appTCP/build";
     int wd = inotify_add_watch(fd, directory_to_watch, IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO);
     if (wd == -1) {
         perror("inotify_add_watch");
@@ -104,7 +117,7 @@ void *inotify_watcher(void *arg) {
     }
 
     clock_t start_time = clock();           // Запоминаем начальное время
-    int timer_seconds = frequency;          // Таймер на x секунд
+    int timer_seconds = freq;          // Таймер на x секунд
 
     while(1) {
         if (!((clock() - start_time) > timer_seconds * CLOCKS_PER_SEC)){
@@ -141,7 +154,7 @@ void *inotify_watcher(void *arg) {
                     // } else {
                     //     printf("File deleted: %s\n", full_path);
                     // }
-                    type_of_event = "DELETE";
+                    type_of_event = "delete";
                 } else {
                     // if (event->mask & IN_ISDIR) {
                     //     printf("Directory modified: %s\n", full_path);
@@ -150,20 +163,20 @@ void *inotify_watcher(void *arg) {
                     // }
                     type_of_event = "unknown";
                 }
-                // else type_of_event = "UNKNOWN";
 
                 char sha256_buff[65];
-                // printf("path %s\n", full_path);
+                printf("path %s\n", full_path);
                 compute_sha256(full_path, sha256_buff);
 
-                char file_name_d[255 + 1] = {0};  
-                strncpy(file_name_d, event->name, event->len); 
-                file_name_d[event->len] = '\0';  
+                // char file_name_d[255 + 1] = {0};  
+                // strncpy(file_name_d, event->name, event->len); 
+                // file_name_d[event->len] = '\0';  
 
                 snprintf(event_buffer, BUFFER_SIZE, "type_of_event: %s, file_name: %.255s, sha256: %s", 
                          type_of_event,
-                         file_name_d,
-                         sha256_buff);
+                        //  file_name_d,
+                        full_path,
+                        sha256_buff);
                 pthread_mutex_unlock(&mutex);
                 pthread_cond_signal((pthread_cond_t*)arg);
             }

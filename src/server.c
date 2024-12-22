@@ -24,11 +24,17 @@ void sigterm_handler(int sig);
 int client_pid = 0;
 
 
-int main() {
+int main(int argc, char *argv[]) {
+
+    if (argc != 3) {
+        fprintf(stderr, "Usage: %s <directory> <frequency>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
     int server_fd, new_socket;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
-    char buffer[BUFFER_SIZE] = {0};
+    // char buffer[BUFFER_SIZE] = {0};
     char project_path[1000];
     
     // struct sigaction sa;
@@ -90,8 +96,11 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    // handle_client(new_socket);
-
+    // handle_client(new_socket);   
+    char buffer[BUFFER_SIZE] = {0};
+    snprintf(buffer, BUFFER_SIZE, "%s %d", argv[1], atoi(argv[2]));
+    send(new_socket, buffer, strlen(buffer), 0);
+    // printf("Server sent: %s\n", buffer);
 
     char json_message[512];
     memset(json_message, 0, sizeof(json_message));
